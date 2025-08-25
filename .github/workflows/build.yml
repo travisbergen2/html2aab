@@ -149,3 +149,10 @@ jobs:
             }
           }
           EOF
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: HTML-to-AAP-Converter-build
+          path: |
+            app-template/app/build/outputs/bundle/release/app-release.aab
+            app-template/app/build/outputs/apk/release/app-release-unsigned.apk

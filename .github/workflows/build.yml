@@ -66,19 +66,22 @@ jobs:
           echo "$HOME/gradle-${GRADLE_VER}/bin" >> "$GITHUB_PATH"
           gradle -v
 
-      - name: Generate minimal Android WebView project
-        run: |
-          set -e
-          APP_ROOT=app-template
-          APP_DIR=$APP_ROOT/app
+            - name: Generate minimal Android WebView project
+          run: |
+            set -e
+            APP_ROOT=app-template
+            APP_DIR=$APP_ROOT/app
 
-          mkdir -p "$APP_DIR/src/main/assets/www" \
-                   "$APP_DIR/src/main/java/com/example/app" \
+            # turn APP_ID into path, e.g. com.html.aap.converter -> com/html/aap/converter
+            PKG_PATH="$(echo "${APP_ID}" | tr '.' '/')"
+
+            mkdir -p "$APP_DIR/src/main/assets/www" \
+                   "$APP_DIR/src/main/java/${PKG_PATH}" \
                    "$APP_DIR/src/main/res/layout" \
                    "$APP_DIR/src/main/res/values" \
                    "$APP_DIR/src/main/res/mipmap-anydpi-v26"
 
-          # settings.gradle (modern, repo-only in settings)
+          # settings.gradle
           printf '%s\n' \
             "pluginManagement { repositories { google(); mavenCentral() } }" \
             "dependencyResolutionManagement { repositories { google(); mavenCentral() } }" \
@@ -86,7 +89,7 @@ jobs:
             'include(":app")' \
             > "$APP_ROOT/settings.gradle"
 
-          # ROOT build.gradle (AGP classpath only; no project repos)
+          # root build.gradle (AGP classpath)
           printf '%s\n' \
             "buildscript {" \
             "  repositories { google(); mavenCentral() }" \
@@ -101,7 +104,7 @@ jobs:
             "android.nonTransitiveRClass=true" \
             > "$APP_ROOT/gradle.properties"
 
-          # APP build.gradle — literal SDK numbers to avoid early expansion issues
+          # module build.gradle
           printf '%s\n' \
             "apply plugin: 'com.android.application'" \
             "" \
@@ -136,11 +139,11 @@ jobs:
 
           : > "$APP_DIR/proguard-rules.pro"
 
-          # AndroidManifest.xml
+          # Manifest: use fully-qualified activity to avoid package ambiguity
           printf '%s\n' \
             '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' \
             '  <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:allowBackup="true" android:supportsRtl="true">' \
-            '    <activity android:name=".MainActivity" android:exported="true">' \
+            '    <activity android:name="'${APP_ID}'.MainActivity" android:exported="true">' \
             '      <intent-filter>' \
             '        <action android:name="android.intent.action.MAIN" />' \
             '        <category android:name="android.intent.category.LAUNCHER" />' \
@@ -150,26 +153,22 @@ jobs:
             '</manifest>' \
             > "$APP_DIR/src/main/AndroidManifest.xml"
 
-          # resources
+          # strings/colors/layout/icons
           printf '%s\n' '<resources><string name="app_name">'${APP_NAME}'</string></resources>' \
             > "$APP_DIR/src/main/res/values/strings.xml"
-
           printf '%s\n' '<resources><color name="ic_launcher_background">#FFFFFF</color></resources>' \
             > "$APP_DIR/src/main/res/values/colors.xml"
-
           printf '%s\n' \
             '<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">' \
             '  <WebView android:id="@+id/webview" android:layout_width="match_parent" android:layout_height="match_parent"/>' \
             '</FrameLayout>' \
             > "$APP_DIR/src/main/res/layout/activity_main.xml"
-
           printf '%s\n' \
             '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">' \
             '  <background android:drawable="@color/ic_launcher_background"/>' \
             '  <foreground android:drawable="@mipmap/ic_launcher_foreground"/>' \
             '</adaptive-icon>' \
             > "$APP_DIR/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
-
           printf '%s\n' \
             '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">' \
             '  <path android:fillColor="#4CAF50" android:pathData="M8,54a46,46 0 1,0 92,0a46,46 0 1,0 -92,0z"/>' \
@@ -178,23 +177,26 @@ jobs:
             '</vector>' \
             > "$APP_DIR/src/main/res/mipmap-anydpi-v26/ic_launcher_foreground.xml"
 
-          # MainActivity.java
-          printf '%s\n' \
-            'package com.example.app;' \
-            'import android.os.Bundle;' \
-            'import android.webkit.WebSettings;' \
-            'import android.webkit.WebView;' \
-            'import androidx.activity.ComponentActivity;' \
-            'public class MainActivity extends ComponentActivity {' \
-            '  @Override protected void onCreate(Bundle savedInstanceState) {' \
-            '    super.onCreate(savedInstanceState);' \
-            '    WebView w = new WebView(this); setContentView(w);' \
-            '    WebSettings s = w.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true);' \
-            '    WebView.setWebContentsDebuggingEnabled(true);' \
-            '    w.loadUrl("file:///android_asset/www/index.html");' \
-            '  }' \
-            '}' \
-            > "$APP_DIR/src/main/java/com/example/app/MainActivity.java"
+          # MainActivity in the APP_ID package & folder
+          cat > "$APP_DIR/src/main/java/${PKG_PATH}/MainActivity.java" <<'JAVA'
+          package REPLACE_ME;
+          import android.os.Bundle;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import androidx.activity.ComponentActivity;
+          public class MainActivity extends ComponentActivity {
+            @Override protected void onCreate(Bundle savedInstanceState) {
+              super.onCreate(savedInstanceState);
+              WebView w = new WebView(this); setContentView(w);
+              WebSettings s = w.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true);
+              WebView.setWebContentsDebuggingEnabled(true);
+              w.loadUrl("file:///android_asset/www/index.html");
+            }
+          }
+JAVA
+          # swap package placeholder
+          sed -i "s/^package REPLACE_ME;/package ${APP_ID};/" "$APP_DIR/src/main/java/${PKG_PATH}/MainActivity.java"
+
 
       - name: Inject your web assets (index.html, optional zip/icon)
         run: |

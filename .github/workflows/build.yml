@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      APP_NAME: "HTML-to-AAP-Converter"   # keep ASCII to avoid shell quoting issues
+      APP_NAME: "HTML-to-AAP-Converter"
       APP_ID: "com.html.aap.converter"
       VERSION_CODE: "1"
       VERSION_NAME: "1.0"
@@ -112,4 +112,110 @@ EOF
 <resources><color name="ic_launcher_background">#FFFFFF</color></resources>
 EOF
 
-          cat > app-template/ap
+          cat > app-template/app/src/main/res/layout/activity_main.xml <<'EOF'
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
+  <WebView android:id="@+id/webview" android:layout_width="match_parent" android:layout_height="match_parent"/>
+</FrameLayout>
+EOF
+
+          cat > app-template/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+  <background android:drawable="@color/ic_launcher_background"/>
+  <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+</adaptive-icon>
+EOF
+
+          cat > app-template/app/src/main/res/mipmap-anydpi-v26/ic_launcher_foreground.xml <<'EOF'
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+  <path android:fillColor="#4CAF50" android:pathData="M8,54a46,46 0 1,0 92,0a46,46 0 1,0 -92,0z"/>
+  <path android:fillColor="#FFFFFF" android:pathData="M30,58h48v8H30z"/>
+  <path android:fillColor="#FFFFFF" android:pathData="M54,34L70,74H38z"/>
+</vector>
+EOF
+
+          cat > app-template/app/src/main/java/com/example/app/MainActivity.java <<'EOF'
+package com.example.app;
+import android.os.Bundle;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import androidx.activity.ComponentActivity;
+public class MainActivity extends ComponentActivity {
+  @Override protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    WebView w = new WebView(this); setContentView(w);
+    WebSettings s = w.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true);
+    WebView.setWebContentsDebuggingEnabled(true);
+    w.loadUrl("file:///android_asset/www/index.html");
+  }
+}
+EOF
+
+      - name: Inject metadata, permissions, and web assets
+        run: |
+          set -e
+          APP_DIR=app-template/app
+          sed -i "s/applicationId \".*\"/applicationId \"${{ env.APP_ID }}\"/" "$APP_DIR/build.gradle"
+          sed -i "s/namespace \".*\"/namespace \"${{ env.APP_ID }}\"/" "$APP_DIR/build.gradle"
+          sed -i "s/minSdk .*/minSdk ${{ env.MIN_SDK }}/" "$APP_DIR/build.gradle"
+          sed -i "s/targetSdk .*/targetSdk ${{ env.TARGET_SDK }}/" "$APP_DIR/build.gradle"
+          sed -i "s/versionCode .*/versionCode ${{ env.VERSION_CODE }}/" "$APP_DIR/build.gradle"
+          sed -i "s/versionName \".*\"/versionName \"${{ env.VERSION_NAME }}\"/" "$APP_DIR/build.gradle"
+          sed -i 's#<string name="app_name">.*</string>#<string name="app_name">${{ env.APP_NAME }}</string>#' "$APP_DIR/src/main/res/values/strings.xml"
+
+          mkdir -p "$APP_DIR/src/main/assets/www"
+          if [ -f web/index.html ]; then
+            cp web/index.html "$APP_DIR/src/main/assets/www/index.html"
+          else
+            echo "<h1>${{ env.APP_NAME }}</h1>" > "$APP_DIR/src/main/assets/www/index.html"
+          fi
+
+          if [ -n "${{ env.PERMISSIONS }}" ]; then
+            IFS=', ' read -r -a arr <<< "${{ env.PERMISSIONS }}"
+            for p in "${arr[@]}"; do
+              [ -z "$p" ] && continue
+              sed -i "s#<!--PERMISSIONS-->#<uses-permission android:name=\"android.permission.$p\" />\\n  <!--PERMISSIONS-->#" "$APP_DIR/src/main/AndroidManifest.xml"
+            done
+          fi
+
+          [ -f web/assets.zip ] && unzip -oq web/assets.zip -d "$APP_DIR/src/main/assets/www"
+          [ -f web/icon.png ] && cp web/icon.png "$APP_DIR/src/main/res/mipmap-anydpi-v26/ic_launcher_foreground.png"
+
+      - name: Gradle Wrapper
+        working-directory: app-template
+        run: gradle wrapper
+
+      - name: Build (AAB + unsigned APK)
+        working-directory: app-template
+        run: ./gradlew --no-daemon clean bundleRelease assembleRelease
+
+      - name: Restore keystore from secret
+        run: echo "${{ secrets.MYAPP_KEYSTORE_BASE64 }}" | base64 -d > upload.jks
+
+      - name: Sign AAB
+        env:
+          STOREPASS: ${{ secrets.MYAPP_UPLOAD_STORE_PASSWORD }}
+          KEYPASS:   ${{ secrets.MYAPP_UPLOAD_KEY_PASSWORD }}
+          ALIAS:     ${{ secrets.MYAPP_UPLOAD_ALIAS }}
+        run: |
+          AAB=app-template/app/build/outputs/bundle/release/app-release.aab
+          jarsigner -keystore upload.jks -storepass "$STOREPASS" -keypass "$KEYPASS" -sigalg SHA256withRSA -digestalg SHA-256 "$AAB" "$ALIAS"
+          jarsigner -verify -certs "$AAB"
+          cp "$AAB" "${{ env.APP_NAME }}.aab"
+
+      - name: Align & Sign APK
+        env:
+          STOREPASS: ${{ secrets.MYAPP_UPLOAD_STORE_PASSWORD }}
+          KEYPASS:   ${{ secrets.MYAPP_UPLOAD_KEY_PASSWORD }}
+          ALIAS:     ${{ secrets.MYAPP_UPLOAD_ALIAS }}
+        run: |
+          APKU=app-template/app/build/outputs/apk/release/app-release-unsigned.apk
+          zipalign -p -f 4 "$APKU" aligned.apk
+          apksigner sign --ks upload.jks --ks-pass pass:"$STOREPASS" --ks-key-alias "$ALIAS" --key-pass pass:"$KEYPASS" --out "${{ env.APP_NAME }}.apk" aligned.apk
+          apksigner verify "${{ env.APP_NAME }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-build
+          path: |
+            ${{ env.APP_NAME }}.aab
+            ${{ env.APP_NAME }}.apk

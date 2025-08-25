@@ -55,6 +55,47 @@ jobs:
           mkdir -p app-template/app/src/main/res/values
           mkdir -p app-template/app/src/main/res/mipmap-anydpi-v26
 
+                - name: Inject web assets (ensure index.html exists)
+              - name: Inject web assets (ensure index.html exists)
+        run: |
+          set -e
+          APP_DIR=app-template/app
+          mkdir -p "$APP_DIR/src/main/assets/www"
+          if [ -f web/index.html ]; then
+            cp web/index.html "$APP_DIR/src/main/assets/www/index.html"
+          else
+            echo "<h1>${{ env.APP_NAME }}</h1><p>It works 🎉</p>" > "$APP_DIR/src/main/assets/www/index.html"
+          fi
+
+      - name: Create Gradle wrapper
+        working-directory: app-template
+        run: |
+          gradle wrapper
+          chmod +x gradlew
+
+      - name: Build release AAB + APK
+        working-directory: app-template
+        run: ./gradlew --no-daemon --stacktrace :app:bundleRelease :app:assembleRelease
+
+      - name: List outputs (debug aid)
+        run: |
+          echo "::group::bundle/release"
+          ls -lah app-template/app/build/outputs/bundle/release || true
+          echo "::endgroup::"
+          echo "::group::apk/release"
+          ls -lah app-template/app/build/outputs/apk/release || true
+          echo "::endgroup::"
+
+      - name: Upload build artifacts (unsigned)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-build
+          path: |
+            app-template/app/build/outputs/bundle/release/*.aab
+            app-template/app/build/outputs/apk/release/*.apk
+
+
+
           cat > app-template/settings.gradle <<'EOF'
           pluginManagement { repositories { google(); mavenCentral() } }
           dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }

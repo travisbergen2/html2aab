@@ -30,27 +30,53 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install Android SDK cmdline-tools
+      - name: Install Android SDK cmdline-tools (robust)
         run: |
           set -e
           ANDROID_SDK_ROOT="$HOME/android-sdk"
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-          curl -sL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/tools.zip
+
+          URL_TOOLS="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+
+          echo "Downloading Android cmdline-tools…"
+          curl --fail --location --show-error \
+               --retry 5 --retry-delay 2 --retry-connrefused \
+               -o /tmp/tools.zip "$URL_TOOLS"
+
           unzip -q /tmp/tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
           mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-${TARGET_SDK}" "build-tools;${TARGET_SDK}.0.0"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "platforms;android-${TARGET_SDK}" \
+            "build-tools;${TARGET_SDK}.0.0"
+
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
           echo "$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/${TARGET_SDK}.0.0" >> "$GITHUB_PATH"
 
-      - name: Install Gradle 8.7 (for wrapper generation)
-        run: |
-          set -e
-          GRADLE_VER=8.7
-          curl -sL "https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip" -o /tmp/gradle.zip
+
+        - name: Install Gradle 8.7 (robust)
+          run: |
+            set -e
+            GRADLE_VER=8.7
+            URL_PRIMARY="https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip"
+            URL_FALLBACK="https://downloads.gradle-dn.com/distributions/gradle-${GRADLE_VER}-bin.zip"
+
+          dl() {
+          local url="$1"
+          echo "Downloading: $url"
+           curl --fail --location --show-error \
+           --retry 5 --retry-delay 2 --retry-connrefused \
+            -o /tmp/gradle.zip "$url" || return 1
+          }
+
+          dl "$URL_PRIMARY" || dl "$URL_FALLBACK"
+
           unzip -q /tmp/gradle.zip -d "$HOME"
           echo "$HOME/gradle-${GRADLE_VER}/bin" >> "$GITHUB_PATH"
           gradle -v
+
 
 
       - name: Generate minimal Android WebView project (root build.gradle + app)

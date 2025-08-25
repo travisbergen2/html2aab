@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      APP_NAME: "HTML-to-AAP-Converter" # keep ASCII to avoid quoting issues
+      APP_NAME: "HTML-to-AAP-Converter"
       APP_ID: "com.html.aap.converter"
       VERSION_CODE: "1"
       VERSION_NAME: "1.0"
@@ -36,7 +36,6 @@ jobs:
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
 
           URL_TOOLS="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
-
           echo "Downloading Android cmdline-tools…"
           curl --fail --location --show-error \
                --retry 5 --retry-delay 2 --retry-connrefused \
@@ -54,7 +53,7 @@ jobs:
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
           echo "$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/${TARGET_SDK}.0.0" >> "$GITHUB_PATH"
 
-      - name: Install Gradle 8.7 (for wrapper generation)
+      - name: Install Gradle 8.7 (robust)
         run: |
           set -e
           GRADLE_VER=8.7
@@ -66,137 +65,134 @@ jobs:
           echo "$HOME/gradle-${GRADLE_VER}/bin" >> "$GITHUB_PATH"
           gradle -v
 
-            - name: Generate minimal Android WebView project
-          run: |
-            set -e
-            APP_ROOT=app-template
-            APP_DIR=$APP_ROOT/app
+      - name: Generate minimal Android WebView project (matches APP_ID)
+        run: |
+          set -e
+          APP_ROOT=app-template
+          APP_DIR=$APP_ROOT/app
+          PKG_PATH="$(echo "${APP_ID}" | tr '.' '/')"
 
-            # turn APP_ID into path, e.g. com.html.aap.converter -> com/html/aap/converter
-            PKG_PATH="$(echo "${APP_ID}" | tr '.' '/')"
-
-            mkdir -p "$APP_DIR/src/main/assets/www" \
+          mkdir -p "$APP_DIR/src/main/assets/www" \
                    "$APP_DIR/src/main/java/${PKG_PATH}" \
                    "$APP_DIR/src/main/res/layout" \
                    "$APP_DIR/src/main/res/values" \
                    "$APP_DIR/src/main/res/mipmap-anydpi-v26"
 
           # settings.gradle
-          printf '%s\n' \
-            "pluginManagement { repositories { google(); mavenCentral() } }" \
-            "dependencyResolutionManagement { repositories { google(); mavenCentral() } }" \
-            'rootProject.name = "WebAppShell"' \
-            'include(":app")' \
-            > "$APP_ROOT/settings.gradle"
+          cat > "$APP_ROOT/settings.gradle" <<'EOF'
+pluginManagement { repositories { google(); mavenCentral() } }
+dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+rootProject.name = "WebAppShell"
+include(":app")
+EOF
 
-          # root build.gradle (AGP classpath)
-          printf '%s\n' \
-            "buildscript {" \
-            "  repositories { google(); mavenCentral() }" \
-            "  dependencies { classpath 'com.android.tools.build:gradle:8.5.2' }" \
-            "}" \
-            > "$APP_ROOT/build.gradle"
+          # root build.gradle (AGP classpath only)
+          cat > "$APP_ROOT/build.gradle" <<'EOF'
+buildscript {
+  repositories { google(); mavenCentral() }
+  dependencies { classpath "com.android.tools.build:gradle:8.5.2" }
+}
+EOF
 
           # gradle.properties
-          printf '%s\n' \
-            "org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8" \
-            "android.useAndroidX=true" \
-            "android.nonTransitiveRClass=true" \
-            > "$APP_ROOT/gradle.properties"
+          cat > "$APP_ROOT/gradle.properties" <<'EOF'
+org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+EOF
 
-          # module build.gradle
-          printf '%s\n' \
-            "apply plugin: 'com.android.application'" \
-            "" \
-            "android {" \
-            "  namespace '${APP_ID}'" \
-            "  compileSdk 35" \
-            "  defaultConfig {" \
-            "    applicationId '${APP_ID}'" \
-            "    minSdk 21" \
-            "    targetSdk 35" \
-            "    versionCode ${VERSION_CODE}" \
-            "    versionName '${VERSION_NAME}'" \
-            "  }" \
-            "  compileOptions {" \
-            "    sourceCompatibility JavaVersion.VERSION_17" \
-            "    targetCompatibility JavaVersion.VERSION_17" \
-            "  }" \
-            "  buildTypes {" \
-            "    release {" \
-            "      minifyEnabled false" \
-            "      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'" \
-            "    }" \
-            "  }" \
-            "}" \
-            "" \
-            "dependencies {" \
-            "  implementation 'androidx.appcompat:appcompat:1.7.0'" \
-            "  implementation 'androidx.activity:activity:1.9.2'" \
-            "  implementation 'androidx.webkit:webkit:1.10.0'" \
-            "}" \
-            > "$APP_DIR/build.gradle"
+          # module build.gradle (literal SDK numbers to avoid early expansion issues)
+          cat > "$APP_DIR/build.gradle" <<EOF
+apply plugin: "com.android.application"
+
+android {
+  namespace "${APP_ID}"
+  compileSdk 35
+
+  defaultConfig {
+    applicationId "${APP_ID}"
+    minSdk 21
+    targetSdk 35
+    versionCode ${VERSION_CODE}
+    versionName "${VERSION_NAME}"
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  buildTypes {
+    release {
+      minifyEnabled false
+      proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+    }
+  }
+}
+
+dependencies {
+  implementation "androidx.appcompat:appcompat:1.7.0"
+  implementation "androidx.activity:activity:1.9.2"
+  implementation "androidx.webkit:webkit:1.10.0"
+}
+EOF
 
           : > "$APP_DIR/proguard-rules.pro"
 
-          # Manifest: use fully-qualified activity to avoid package ambiguity
-          printf '%s\n' \
-            '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' \
-            '  <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:allowBackup="true" android:supportsRtl="true">' \
-            '    <activity android:name="'${APP_ID}'.MainActivity" android:exported="true">' \
-            '      <intent-filter>' \
-            '        <action android:name="android.intent.action.MAIN" />' \
-            '        <category android:name="android.intent.category.LAUNCHER" />' \
-            '      </intent-filter>' \
-            '    </activity>' \
-            '  </application>' \
-            '</manifest>' \
-            > "$APP_DIR/src/main/AndroidManifest.xml"
+          # Manifest (fully-qualified activity)
+          cat > "$APP_DIR/src/main/AndroidManifest.xml" <<EOF
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:allowBackup="true" android:supportsRtl="true">
+    <activity android:name="${APP_ID}.MainActivity" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>
+EOF
 
-          # strings/colors/layout/icons
-          printf '%s\n' '<resources><string name="app_name">'${APP_NAME}'</string></resources>' \
-            > "$APP_DIR/src/main/res/values/strings.xml"
-          printf '%s\n' '<resources><color name="ic_launcher_background">#FFFFFF</color></resources>' \
-            > "$APP_DIR/src/main/res/values/colors.xml"
-          printf '%s\n' \
-            '<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">' \
-            '  <WebView android:id="@+id/webview" android:layout_width="match_parent" android:layout_height="match_parent"/>' \
-            '</FrameLayout>' \
-            > "$APP_DIR/src/main/res/layout/activity_main.xml"
-          printf '%s\n' \
-            '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">' \
-            '  <background android:drawable="@color/ic_launcher_background"/>' \
-            '  <foreground android:drawable="@mipmap/ic_launcher_foreground"/>' \
-            '</adaptive-icon>' \
-            > "$APP_DIR/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
-          printf '%s\n' \
-            '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">' \
-            '  <path android:fillColor="#4CAF50" android:pathData="M8,54a46,46 0 1,0 92,0a46,46 0 1,0 -92,0z"/>' \
-            '  <path android:fillColor="#FFFFFF" android:pathData="M30,58h48v8H30z"/>' \
-            '  <path android:fillColor="#FFFFFF" android:pathData="M54,34L70,74H38z"/>' \
-            '</vector>' \
-            > "$APP_DIR/src/main/res/mipmap-anydpi-v26/ic_launcher_foreground.xml"
+          # resources
+          echo "<resources><string name=\"app_name\">${APP_NAME}</string></resources>" > "$APP_DIR/src/main/res/values/strings.xml"
+          echo "<resources><color name=\"ic_launcher_background\">#FFFFFF</color></resources>" > "$APP_DIR/src/main/res/values/colors.xml"
+          cat > "$APP_DIR/src/main/res/layout/activity_main.xml" <<'EOF'
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
+  <WebView android:id="@+id/webview" android:layout_width="match_parent" android:layout_height="match_parent"/>
+</FrameLayout>
+EOF
+          cat > "$APP_DIR/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" <<'EOF'
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+  <background android:drawable="@color/ic_launcher_background"/>
+  <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+</adaptive-icon>
+EOF
+          cat > "$APP_DIR/src/main/res/mipmap-anydpi-v26/ic_launcher_foreground.xml" <<'EOF'
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+  <path android:fillColor="#4CAF50" android:pathData="M8,54a46,46 0 1,0 92,0a46,46 0 1,0 -92,0z"/>
+  <path android:fillColor="#FFFFFF" android:pathData="M30,58h48v8H30z"/>
+  <path android:fillColor="#FFFFFF" android:pathData="M54,34L70,74H38z"/>
+</vector>
+EOF
 
           # MainActivity in the APP_ID package & folder
-          cat > "$APP_DIR/src/main/java/${PKG_PATH}/MainActivity.java" <<'JAVA'
-          package REPLACE_ME;
-          import android.os.Bundle;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import androidx.activity.ComponentActivity;
-          public class MainActivity extends ComponentActivity {
-            @Override protected void onCreate(Bundle savedInstanceState) {
-              super.onCreate(savedInstanceState);
-              WebView w = new WebView(this); setContentView(w);
-              WebSettings s = w.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true);
-              WebView.setWebContentsDebuggingEnabled(true);
-              w.loadUrl("file:///android_asset/www/index.html");
-            }
-          }
-JAVA
-          # swap package placeholder
+          cat > "$APP_DIR/src/main/java/${PKG_PATH}/MainActivity.java" <<'EOF'
+package REPLACE_ME;
+import android.os.Bundle;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import androidx.activity.ComponentActivity;
+public class MainActivity extends ComponentActivity {
+  @Override protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    WebView w = new WebView(this); setContentView(w);
+    WebSettings s = w.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true);
+    WebView.setWebContentsDebuggingEnabled(true);
+    w.loadUrl("file:///android_asset/www/index.html");
+  }
+}
+EOF
           sed -i "s/^package REPLACE_ME;/package ${APP_ID};/" "$APP_DIR/src/main/java/${PKG_PATH}/MainActivity.java"
-
 
       - name: Inject your web assets (index.html, optional zip/icon)
         run: |
@@ -228,43 +224,6 @@ JAVA
         run: |
           echo "::group::bundle/release"; ls -lah app-template/app/build/outputs/bundle/release || true; echo "::endgroup::"
           echo "::group::apk/release";    ls -lah app-template/app/build/outputs/apk/release    || true; echo "::endgroup::"
-
-      # --- OPTIONAL SIGNING (uncomment when secrets are set) ---
-      # Required repository secrets:
-      #   UPLOAD_KEYSTORE_BASE64 : base64 of your upload.jks
-      #   UPLOAD_ALIAS           : key alias
-      #   UPLOAD_STOREPASS       : store password
-      #   UPLOAD_KEYPASS         : key password
-      #
-      # - name: Restore keystore from secret
-      #   if: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' }}
-      #   run: echo "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" | base64 -d > upload.jks
-      #
-      # - name: Sign AAB & APK
-      #   if: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' }}
-      #   run: |
-      #     set -e
-      #     AAB="app-template/app/build/outputs/bundle/release/app-release.aab"
-      #     APKU="app-template/app/build/outputs/apk/release/app-release-unsigned.apk"
-      #     jarsigner -keystore upload.jks -storepass "${{ secrets.UPLOAD_STOREPASS }}" -keypass "${{ secrets.UPLOAD_KEYPASS }}" \
-      #       -sigalg SHA256withRSA -digestalg SHA-256 "$AAB" "${{ secrets.UPLOAD_ALIAS }}"
-      #     jarsigner -verify -certs "$AAB"
-      #     zipalign -p -f 4 "$APKU" aligned.apk
-      #     apksigner sign --ks upload.jks --ks-pass pass:"${{ secrets.UPLOAD_STOREPASS }}" \
-      #       --ks-key-alias "${{ secrets.UPLOAD_ALIAS }}" --key-pass pass:"${{ secrets.UPLOAD_KEYPASS }}" \
-      #       --out "${APP_NAME}.apk" aligned.apk
-      #     apksigner verify "${APP_NAME}.apk"
-      #     cp "$AAB" "${APP_NAME}.aab"
-      #
-      # - name: Upload signed artifacts
-      #   if: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' }}
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: ${{ env.APP_NAME }}-signed
-      #     path: |
-      #       ${{ env.APP_NAME }}.aab
-      #       ${{ env.APP_NAME }}.apk
-      # --- END OPTIONAL SIGNING ---
 
       - name: Upload build artifacts (unsigned)
         uses: actions/upload-artifact@v4

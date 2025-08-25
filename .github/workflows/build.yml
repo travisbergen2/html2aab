@@ -83,11 +83,14 @@ jobs:
             > "$APP_ROOT/build.gradle"
 
           # gradle.properties
+          # ROOT build.gradle – provide AGP classpath (NO project repos)
           printf '%s\n' \
-            "org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8" \
-            "android.useAndroidX=true" \
-            "android.nonTransitiveRClass=true" \
-            > "$APP_ROOT/gradle.properties"
+            "buildscript {" \
+            "  repositories { google(); mavenCentral() }" \
+            "  dependencies { classpath 'com.android.tools.build:gradle:8.5.2' }" \
+            "}" \
+            > "$APP_ROOT/build.gradle"
+
 
           # APP build.gradle – uses root classpath
           printf '%s\n' \

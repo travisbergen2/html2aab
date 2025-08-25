@@ -1,4 +1,127 @@
-      - name: Build release AAB + APK
-        working-directory: app-template
-        run: ./gradlew --no-daemon --info --stacktrace :app:bundleRelease :app:assembleRelease
+      - name: Generate minimal Android WebView project (root build.gradle + app)
+        run: |
+          set -e
+          APP_ROOT=app-template
+          APP_DIR=$APP_ROOT/app
 
+          mkdir -p "$APP_DIR/src/main/assets/www" \
+                   "$APP_DIR/src/main/java/com/example/app" \
+                   "$APP_DIR/src/main/res/layout" \
+                   "$APP_DIR/src/main/res/values" \
+                   "$APP_DIR/src/main/res/mipmap-anydpi-v26"
+
+          # settings.gradle (repos only)
+          printf '%s\n' \
+            "pluginManagement { repositories { google(); mavenCentral() } }" \
+            "dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }" \
+            'rootProject.name = "WebAppShell"' \
+            'include(":app")' \
+            > "$APP_ROOT/settings.gradle"
+
+          # ROOT build.gradle – provide AGP classpath here
+          printf '%s\n' \
+            "buildscript {" \
+            "  repositories { google(); mavenCentral() }" \
+            "  dependencies { classpath 'com.android.tools.build:gradle:8.5.2' }" \
+            "}" \
+            "allprojects { repositories { google(); mavenCentral() } }" \
+            > "$APP_ROOT/build.gradle"
+
+          # gradle.properties – a few defaults
+          printf '%s\n' \
+            "org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8" \
+            "android.useAndroidX=true" \
+            "android.nonTransitiveRClass=true" \
+            > "$APP_ROOT/gradle.properties"
+
+          # APP build.gradle – use 'apply plugin' so it uses the root classpath
+          printf '%s\n' \
+            "apply plugin: 'com.android.application'" \
+            "" \
+            "android {" \
+            "  namespace '${APP_ID}'" \
+            "  compileSdk ${TARGET_SDK}" \
+            "  defaultConfig {" \
+            "    applicationId '${APP_ID}'" \
+            "    minSdk ${MIN_SDK}" \
+            "    targetSdk ${TARGET_SDK}" \
+            "    versionCode ${VERSION_CODE}" \
+            "    versionName '${VERSION_NAME}'" \
+            "  }" \
+            "  buildTypes {" \
+            "    release {" \
+            "      minifyEnabled false" \
+            "      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'" \
+            "    }" \
+            "  }" \
+            "}" \
+            "" \
+            "dependencies {" \
+            "  implementation 'androidx.appcompat:appcompat:1.7.0'" \
+            "  implementation 'androidx.activity:activity:1.9.2'" \
+            "  implementation 'androidx.webkit:webkit:1.10.0'" \
+            "}" \
+            > "$APP_DIR/build.gradle"
+
+          : > "$APP_DIR/proguard-rules.pro"
+
+          # AndroidManifest.xml
+          printf '%s\n' \
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' \
+            '  <!--PERMISSIONS-->' \
+            '  <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:allowBackup="true" android:supportsRtl="true">' \
+            '    <activity android:name=".MainActivity" android:exported="true">' \
+            '      <intent-filter>' \
+            '        <action android:name="android.intent.action.MAIN" />' \
+            '        <category android:name="android.intent.category.LAUNCHER" />' \
+            '      </intent-filter>' \
+            '    </activity>' \
+            '  </application>' \
+            '</manifest>' \
+            > "$APP_DIR/src/main/AndroidManifest.xml"
+
+          # resources
+          printf '%s\n' '<resources><string name="app_name">'${APP_NAME}'</string></resources>' \
+            > "$APP_DIR/src/main/res/values/strings.xml"
+
+          printf '%s\n' '<resources><color name="ic_launcher_background">#FFFFFF</color></resources>' \
+            > "$APP_DIR/src/main/res/values/colors.xml"
+
+          printf '%s\n' \
+            '<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">' \
+            '  <WebView android:id="@+id/webview" android:layout_width="match_parent" android:layout_height="match_parent"/>' \
+            '</FrameLayout>' \
+            > "$APP_DIR/src/main/res/layout/activity_main.xml"
+
+          printf '%s\n' \
+            '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">' \
+            '  <background android:drawable="@color/ic_launcher_background"/>' \
+            '  <foreground android:drawable="@mipmap/ic_launcher_foreground"/>' \
+            '</adaptive-icon>' \
+            > "$APP_DIR/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+
+          printf '%s\n' \
+            '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">' \
+            '  <path android:fillColor="#4CAF50" android:pathData="M8,54a46,46 0 1,0 92,0a46,46 0 1,0 -92,0z"/>' \
+            '  <path android:fillColor="#FFFFFF" android:pathData="M30,58h48v8H30z"/>' \
+            '  <path android:fillColor="#FFFFFF" android:pathData="M54,34L70,74H38z"/>' \
+            '</vector>' \
+            > "$APP_DIR/src/main/res/mipmap-anydpi-v26/ic_launcher_foreground.xml"
+
+          # MainActivity.java
+          printf '%s\n' \
+            'package com.example.app;' \
+            'import android.os.Bundle;' \
+            'import android.webkit.WebSettings;' \
+            'import android.webkit.WebView;' \
+            'import androidx.activity.ComponentActivity;' \
+            'public class MainActivity extends ComponentActivity {' \
+            '  @Override protected void onCreate(Bundle savedInstanceState) {' \
+            '    super.onCreate(savedInstanceState);' \
+            '    WebView w = new WebView(this); setContentView(w);' \
+            '    WebSettings s = w.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true);' \
+            '    WebView.setWebContentsDebuggingEnabled(true);' \
+            '    w.loadUrl("file:///android_asset/www/index.html");' \
+            '  }' \
+            '}' \
+            > "$APP_DIR/src/main/java/com/example/app/MainActivity.java"

@@ -30,7 +30,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-
       - name: Install Android SDK cmdline-tools (robust)
         run: |
           set -e

@@ -1,3 +1,54 @@
+name: Build Signed AAB/APK from HTML
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "web/**"
+      - ".github/workflows/build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      APP_NAME: "HTML-to-AAP-Converter"   # ASCII simplifies quoting
+      APP_ID: "com.html.aap.converter"
+      VERSION_CODE: "1"
+      VERSION_NAME: "1.0"
+      MIN_SDK: "21"
+      TARGET_SDK: "35"
+      PERMISSIONS: "INTERNET,ACCESS_NETWORK_STATE"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK cmdline-tools
+        run: |
+          set -e
+          ANDROID_SDK_ROOT="$HOME/android-sdk"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          curl -sL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/tools.zip
+          unzip -q /tmp/tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
+          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-${TARGET_SDK}" "build-tools;${TARGET_SDK}.0.0"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/${TARGET_SDK}.0.0" >> "$GITHUB_PATH"
+
+      - name: Install Gradle (for wrapper generation)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gradle
+          gradle -v
+
       - name: Generate minimal Android WebView project (root build.gradle + app)
         run: |
           set -e
@@ -10,7 +61,7 @@
                    "$APP_DIR/src/main/res/values" \
                    "$APP_DIR/src/main/res/mipmap-anydpi-v26"
 
-          # settings.gradle (repos only)
+          # settings.gradle
           printf '%s\n' \
             "pluginManagement { repositories { google(); mavenCentral() } }" \
             "dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }" \
@@ -18,7 +69,7 @@
             'include(":app")' \
             > "$APP_ROOT/settings.gradle"
 
-          # ROOT build.gradle – provide AGP classpath here
+          # ROOT build.gradle – provide AGP classpath
           printf '%s\n' \
             "buildscript {" \
             "  repositories { google(); mavenCentral() }" \
@@ -27,14 +78,14 @@
             "allprojects { repositories { google(); mavenCentral() } }" \
             > "$APP_ROOT/build.gradle"
 
-          # gradle.properties – a few defaults
+          # gradle.properties
           printf '%s\n' \
             "org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8" \
             "android.useAndroidX=true" \
             "android.nonTransitiveRClass=true" \
             > "$APP_ROOT/gradle.properties"
 
-          # APP build.gradle – use 'apply plugin' so it uses the root classpath
+          # APP build.gradle – uses root classpath
           printf '%s\n' \
             "apply plugin: 'com.android.application'" \
             "" \
@@ -125,3 +176,54 @@
             '  }' \
             '}' \
             > "$APP_DIR/src/main/java/com/example/app/MainActivity.java"
+
+      - name: Inject web assets and permissions
+        run: |
+          set -e
+          APP_DIR=app-template/app
+
+          # Permissions
+          if [ -n "${PERMISSIONS}" ]; then
+            IFS=',' read -r -a arr <<< "${PERMISSIONS}"
+            for p in "${arr[@]}"; do
+              p_trim="$(echo "$p" | xargs)"
+              [ -z "$p_trim" ] && continue
+              sed -i "s#<!--PERMISSIONS-->#<uses-permission android:name=\"android.permission.${p_trim}\" />\n  <!--PERMISSIONS-->#" \
+                "$APP_DIR/src/main/AndroidManifest.xml"
+            done
+          fi
+
+          # Web assets: ensure index.html
+          mkdir -p "$APP_DIR/src/main/assets/www"
+          if [ -f web/index.html ]; then
+            cp web/index.html "$APP_DIR/src/main/assets/www/index.html"
+          else
+            printf '<h1>%s</h1><p>It works 🎉</p>\n' "${APP_NAME}" > "$APP_DIR/src/main/assets/www/index.html"
+          fi
+
+          # Optional extras
+          [ -f web/assets.zip ] && unzip -oq web/assets.zip -d "$APP_DIR/src/main/assets/www" || true
+          [ -f web/icon.png ] && cp web/icon.png "$APP_DIR/src/main/res/mipmap-anydpi-v26/ic_launcher_foreground.png" || true
+
+      - name: Create Gradle wrapper
+        working-directory: app-template
+        run: |
+          gradle wrapper
+          chmod +x gradlew
+
+      - name: Build release AAB + APK
+        working-directory: app-template
+        run: ./gradlew --no-daemon --info --stacktrace :app:bundleRelease :app:assembleRelease
+
+      - name: List outputs (debug)
+        run: |
+          echo "::group::bundle/release"; ls -lah app-template/app/build/outputs/bundle/release || true; echo "::endgroup::"
+          echo "::group::apk/release";    ls -lah app-template/app/build/outputs/apk/release    || true; echo "::endgroup::"
+
+      - name: Upload build artifacts (unsigned)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-build
+          path: |
+            app-template/app/build/outputs/bundle/release/*.aab
+            app-template/app/build/outputs/apk/release/*.apk

@@ -11,15 +11,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      APP_NAME: "HTML-to-AAP-Converter"   # ASCII simplifies quoting
-      APP_ID: "com.html.aap.converter"
-      VERSION_CODE: "1"
-      VERSION_NAME: "1.0"
-      MIN_SDK: "21"
-      TARGET_SDK: "35"
-      PERMISSIONS: "INTERNET,ACCESS_NETWORK_STATE"
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,40 +20,27 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          
+
       - name: Install Android SDK cmdline-tools (robust)
         run: |
           set -e
           ANDROID_SDK_ROOT="$HOME/android-sdk"
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-
-          URL_TOOLS="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
-
-          echo "Downloading Android cmdline-tools…"
-          curl --fail --location --show-error \
-               --retry 5 --retry-delay 2 --retry-connrefused \
-               -o /tmp/tools.zip "$URL_TOOLS"
-
+          curl -sL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/tools.zip
           unzip -q /tmp/tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
           mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            "platform-tools" \
-            "platforms;android-${TARGET_SDK}" \
-            "build-tools;${TARGET_SDK}.0.0"
-
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-          echo "$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/${TARGET_SDK}.0.0" >> "$GITHUB_PATH"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/35.0.0" >> $GITHUB_PATH
 
 
-
-        - name: Install Gradle 8.7 (robust)
-          run: |
-            set -e
-            GRADLE_VER=8.7
-            URL_PRIMARY="https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip"
-            URL_FALLBACK="https://downloads.gradle-dn.com/distributions/gradle-${GRADLE_VER}-bin.zip"
+      - name: Install Gradle 8.7 (robust)
+        run: |
+          set -e
+          GRADLE_VER=8.7
+          URL_PRIMARY="https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip"
+          URL_FALLBACK="https://downloads.gradle-dn.com/distributions/gradle-${GRADLE_VER}-bin.zip"
 
           dl() {
           local url="$1"

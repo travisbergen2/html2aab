@@ -11,6 +11,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      APP_NAME: "HTML-to-AAP-Converter" # keep ASCII to avoid quoting issues
+      APP_ID: "com.html.aap.converter"
+      VERSION_CODE: "1"
+      VERSION_NAME: "1.0"
+      MIN_SDK: "21"
+      TARGET_SDK: "35"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,39 +34,39 @@ jobs:
           set -e
           ANDROID_SDK_ROOT="$HOME/android-sdk"
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-          curl -sL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/tools.zip
+
+          URL_TOOLS="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+
+          echo "Downloading Android cmdline-tools…"
+          curl --fail --location --show-error \
+               --retry 5 --retry-delay 2 --retry-connrefused \
+               -o /tmp/tools.zip "$URL_TOOLS"
+
           unzip -q /tmp/tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
           mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-          echo "$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/35.0.0" >> $GITHUB_PATH
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "platforms;android-${TARGET_SDK}" \
+            "build-tools;${TARGET_SDK}.0.0"
 
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/${TARGET_SDK}.0.0" >> "$GITHUB_PATH"
 
-      - name: Install Gradle 8.7 (robust)
+      - name: Install Gradle 8.7 (for wrapper generation)
         run: |
           set -e
           GRADLE_VER=8.7
-          URL_PRIMARY="https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip"
-          URL_FALLBACK="https://downloads.gradle-dn.com/distributions/gradle-${GRADLE_VER}-bin.zip"
-
-          dl() {
-          local url="$1"
-          echo "Downloading: $url"
-           curl --fail --location --show-error \
-           --retry 5 --retry-delay 2 --retry-connrefused \
-            -o /tmp/gradle.zip "$url" || return 1
-          }
-
-          dl "$URL_PRIMARY" || dl "$URL_FALLBACK"
-
+          URL1="https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip"
+          URL2="https://downloads.gradle-dn.com/distributions/gradle-${GRADLE_VER}-bin.zip"
+          curl --fail --location --show-error --retry 5 --retry-delay 2 --retry-connrefused -o /tmp/gradle.zip "$URL1" \
+            || curl --fail --location --show-error --retry 5 --retry-delay 2 --retry-connrefused -o /tmp/gradle.zip "$URL2"
           unzip -q /tmp/gradle.zip -d "$HOME"
           echo "$HOME/gradle-${GRADLE_VER}/bin" >> "$GITHUB_PATH"
           gradle -v
 
-
-
-      - name: Generate minimal Android WebView project (root build.gradle + app)
+      - name: Generate minimal Android WebView project
         run: |
           set -e
           APP_ROOT=app-template
@@ -70,46 +78,46 @@ jobs:
                    "$APP_DIR/src/main/res/values" \
                    "$APP_DIR/src/main/res/mipmap-anydpi-v26"
 
-          # settings.gradle
+          # settings.gradle (modern, repo-only in settings)
           printf '%s\n' \
             "pluginManagement { repositories { google(); mavenCentral() } }" \
-            "dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }" \
+            "dependencyResolutionManagement { repositories { google(); mavenCentral() } }" \
             'rootProject.name = "WebAppShell"' \
             'include(":app")' \
             > "$APP_ROOT/settings.gradle"
 
-          # ROOT build.gradle – provide AGP classpath
+          # ROOT build.gradle (AGP classpath only; no project repos)
           printf '%s\n' \
             "buildscript {" \
             "  repositories { google(); mavenCentral() }" \
             "  dependencies { classpath 'com.android.tools.build:gradle:8.5.2' }" \
             "}" \
-            "allprojects { repositories { google(); mavenCentral() } }" \
             > "$APP_ROOT/build.gradle"
 
           # gradle.properties
-          # ROOT build.gradle – provide AGP classpath (NO project repos)
           printf '%s\n' \
-            "buildscript {" \
-            "  repositories { google(); mavenCentral() }" \
-            "  dependencies { classpath 'com.android.tools.build:gradle:8.5.2' }" \
-            "}" \
-            > "$APP_ROOT/build.gradle"
+            "org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8" \
+            "android.useAndroidX=true" \
+            "android.nonTransitiveRClass=true" \
+            > "$APP_ROOT/gradle.properties"
 
-
-          # APP build.gradle – uses root classpath
+          # APP build.gradle — literal SDK numbers to avoid early expansion issues
           printf '%s\n' \
             "apply plugin: 'com.android.application'" \
             "" \
             "android {" \
             "  namespace '${APP_ID}'" \
-            "  compileSdk ${TARGET_SDK}" \
+            "  compileSdk 35" \
             "  defaultConfig {" \
             "    applicationId '${APP_ID}'" \
-            "    minSdk ${MIN_SDK}" \
-            "    targetSdk ${TARGET_SDK}" \
+            "    minSdk 21" \
+            "    targetSdk 35" \
             "    versionCode ${VERSION_CODE}" \
             "    versionName '${VERSION_NAME}'" \
+            "  }" \
+            "  compileOptions {" \
+            "    sourceCompatibility JavaVersion.VERSION_17" \
+            "    targetCompatibility JavaVersion.VERSION_17" \
             "  }" \
             "  buildTypes {" \
             "    release {" \
@@ -131,7 +139,6 @@ jobs:
           # AndroidManifest.xml
           printf '%s\n' \
             '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' \
-            '  <!--PERMISSIONS-->' \
             '  <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:allowBackup="true" android:supportsRtl="true">' \
             '    <activity android:name=".MainActivity" android:exported="true">' \
             '      <intent-filter>' \
@@ -189,31 +196,16 @@ jobs:
             '}' \
             > "$APP_DIR/src/main/java/com/example/app/MainActivity.java"
 
-      - name: Inject web assets and permissions
+      - name: Inject your web assets (index.html, optional zip/icon)
         run: |
           set -e
           APP_DIR=app-template/app
-
-          # Permissions
-          if [ -n "${PERMISSIONS}" ]; then
-            IFS=',' read -r -a arr <<< "${PERMISSIONS}"
-            for p in "${arr[@]}"; do
-              p_trim="$(echo "$p" | xargs)"
-              [ -z "$p_trim" ] && continue
-              sed -i "s#<!--PERMISSIONS-->#<uses-permission android:name=\"android.permission.${p_trim}\" />\n  <!--PERMISSIONS-->#" \
-                "$APP_DIR/src/main/AndroidManifest.xml"
-            done
-          fi
-
-          # Web assets: ensure index.html
           mkdir -p "$APP_DIR/src/main/assets/www"
           if [ -f web/index.html ]; then
             cp web/index.html "$APP_DIR/src/main/assets/www/index.html"
           else
             printf '<h1>%s</h1><p>It works 🎉</p>\n' "${APP_NAME}" > "$APP_DIR/src/main/assets/www/index.html"
           fi
-
-          # Optional extras
           [ -f web/assets.zip ] && unzip -oq web/assets.zip -d "$APP_DIR/src/main/assets/www" || true
           [ -f web/icon.png ] && cp web/icon.png "$APP_DIR/src/main/res/mipmap-anydpi-v26/ic_launcher_foreground.png" || true
 
@@ -223,14 +215,54 @@ jobs:
           gradle wrapper
           chmod +x gradlew
 
-      - name: Build release AAB + APK
+      - name: Build release AAB + APK (with retry)
         working-directory: app-template
-        run: ./gradlew --no-daemon --info --stacktrace :app:bundleRelease :app:assembleRelease
+        run: |
+          set -e
+          try_build() { ./gradlew --no-daemon --info --stacktrace :app:bundleRelease :app:assembleRelease; }
+          try_build || (echo "First attempt failed, retrying…"; ./gradlew --no-daemon --refresh-dependencies clean; try_build)
 
       - name: List outputs (debug)
         run: |
           echo "::group::bundle/release"; ls -lah app-template/app/build/outputs/bundle/release || true; echo "::endgroup::"
           echo "::group::apk/release";    ls -lah app-template/app/build/outputs/apk/release    || true; echo "::endgroup::"
+
+      # --- OPTIONAL SIGNING (uncomment when secrets are set) ---
+      # Required repository secrets:
+      #   UPLOAD_KEYSTORE_BASE64 : base64 of your upload.jks
+      #   UPLOAD_ALIAS           : key alias
+      #   UPLOAD_STOREPASS       : store password
+      #   UPLOAD_KEYPASS         : key password
+      #
+      # - name: Restore keystore from secret
+      #   if: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' }}
+      #   run: echo "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" | base64 -d > upload.jks
+      #
+      # - name: Sign AAB & APK
+      #   if: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' }}
+      #   run: |
+      #     set -e
+      #     AAB="app-template/app/build/outputs/bundle/release/app-release.aab"
+      #     APKU="app-template/app/build/outputs/apk/release/app-release-unsigned.apk"
+      #     jarsigner -keystore upload.jks -storepass "${{ secrets.UPLOAD_STOREPASS }}" -keypass "${{ secrets.UPLOAD_KEYPASS }}" \
+      #       -sigalg SHA256withRSA -digestalg SHA-256 "$AAB" "${{ secrets.UPLOAD_ALIAS }}"
+      #     jarsigner -verify -certs "$AAB"
+      #     zipalign -p -f 4 "$APKU" aligned.apk
+      #     apksigner sign --ks upload.jks --ks-pass pass:"${{ secrets.UPLOAD_STOREPASS }}" \
+      #       --ks-key-alias "${{ secrets.UPLOAD_ALIAS }}" --key-pass pass:"${{ secrets.UPLOAD_KEYPASS }}" \
+      #       --out "${APP_NAME}.apk" aligned.apk
+      #     apksigner verify "${APP_NAME}.apk"
+      #     cp "$AAB" "${APP_NAME}.aab"
+      #
+      # - name: Upload signed artifacts
+      #   if: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' }}
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: ${{ env.APP_NAME }}-signed
+      #     path: |
+      #       ${{ env.APP_NAME }}.aab
+      #       ${{ env.APP_NAME }}.apk
+      # --- END OPTIONAL SIGNING ---
 
       - name: Upload build artifacts (unsigned)
         uses: actions/upload-artifact@v4

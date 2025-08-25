@@ -96,12 +96,16 @@ jobs:
 
 
 
-          cat > app-template/settings.gradle <<'EOF'
-          pluginManagement { repositories { google(); mavenCentral() } }
-          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
-          rootProject.name = "WebAppShell"
-          include(":app")
-          EOF
+      - name: Write settings.gradle (no heredoc)
+        run: |
+          mkdir -p app-template
+          printf '%s\n' \
+            "pluginManagement { repositories { google(); mavenCentral() } }" \
+            "dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }" \
+            'rootProject.name = "WebAppShell"' \
+            'include(":app")' \
+            > app-template/settings.gradle
+
 
           cat > app-template/app/build.gradle <<'EOF'
           plugins { id 'com.android.application' }

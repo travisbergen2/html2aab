@@ -43,11 +43,15 @@ jobs:
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
           echo "$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/${TARGET_SDK}.0.0" >> "$GITHUB_PATH"
 
-      - name: Install Gradle (for wrapper generation)
+      - name: Install Gradle 8.7 (for wrapper generation)
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y gradle
+          set -e
+          GRADLE_VER=8.7
+          curl -sL "https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip" -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d "$HOME"
+          echo "$HOME/gradle-${GRADLE_VER}/bin" >> "$GITHUB_PATH"
           gradle -v
+
 
       - name: Generate minimal Android WebView project (root build.gradle + app)
         run: |
